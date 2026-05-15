@@ -64,6 +64,16 @@ That file is the source of truth for package design and agreed decisions.
 
 ---
 
+## Handling doubts and ambiguities
+
+If you encounter any ambiguity, missing context, conflict between documents, inability to run a command, uncertainty about whether something is in or out of scope, or any doubt that may affect the verification report, stop and ask technical direction before continuing.
+
+Do not assume unverified behavior is valid.
+Do not present uncertain findings as confirmed.
+Do not propose code corrections as closed architectural decisions when they require technical direction.
+
+---
+
 ## General rules
 
 Execute commands in WSL inside:

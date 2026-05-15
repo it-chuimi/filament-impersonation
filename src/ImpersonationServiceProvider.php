@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Chuimi\FilamentImpersonation;
 
+use Chuimi\FilamentImpersonation\Support\ImpersonationActivity;
+use Chuimi\FilamentImpersonation\Support\ImpersonationAuthorization;
 use Illuminate\Support\ServiceProvider;
 
 class ImpersonationServiceProvider extends ServiceProvider
@@ -14,6 +16,10 @@ class ImpersonationServiceProvider extends ServiceProvider
             __DIR__ . '/../config/filament-impersonation.php',
             'filament-impersonation'
         );
+
+        $this->app->singleton(ImpersonationAuthorization::class);
+        $this->app->singleton(ImpersonationActivity::class);
+        $this->app->singleton(ImpersonationManager::class);
     }
 
     public function boot(): void

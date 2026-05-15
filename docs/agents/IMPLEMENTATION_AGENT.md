@@ -74,6 +74,17 @@ Do not override architecture decisions unless explicitly instructed by technical
 
 ---
 
+## Handling doubts and ambiguities
+
+If you encounter any ambiguity, missing context, conflict between documents, uncovered architectural decision, relevant technical doubt, or any uncertainty that may affect design, scope, behavior, tests, or implementation, stop and ask technical direction before continuing.
+
+Do not improvise.
+Do not make new architectural decisions.
+Do not expand the agreed scope.
+Do not implement alternative solutions without explicit approval.
+
+---
+
 ## Non-negotiable package rules
 
 This is a public reusable package.
