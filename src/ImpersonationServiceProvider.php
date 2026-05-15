@@ -6,6 +6,7 @@ namespace Chuimi\FilamentImpersonation;
 
 use Chuimi\FilamentImpersonation\Support\ImpersonationActivity;
 use Chuimi\FilamentImpersonation\Support\ImpersonationAuthorization;
+use Chuimi\FilamentImpersonation\Support\RedirectResolver;
 use Illuminate\Support\ServiceProvider;
 
 class ImpersonationServiceProvider extends ServiceProvider
@@ -20,6 +21,7 @@ class ImpersonationServiceProvider extends ServiceProvider
         $this->app->singleton(ImpersonationAuthorization::class);
         $this->app->singleton(ImpersonationActivity::class);
         $this->app->singleton(ImpersonationManager::class);
+        $this->app->singleton(RedirectResolver::class);
     }
 
     public function boot(): void
