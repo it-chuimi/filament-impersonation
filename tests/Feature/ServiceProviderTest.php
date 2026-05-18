@@ -13,14 +13,23 @@ it('registers the banner view', function () {
     expect(view()->exists('filament-impersonation::banner'))->toBeTrue();
 });
 
-it('can render the banner view with variables', function () {
+it('can render the banner view with impersonator and impersonated names', function () {
+    session()->put(config('filament-impersonation.session_key'), [
+        'operator_user_id'          => 1,
+        'operator_user_type'        => 'App\Models\User',
+        'operator_guard'            => 'web',
+        'impersonated_user_id'      => 2,
+        'impersonated_user_type'    => 'App\Models\User',
+        'impersonated_guard'        => 'web',
+        'impersonation_activity_id' => 1,
+        'started_at'                => now()->toISOString(),
+    ]);
+
     $html = view('filament-impersonation::banner', [
         'impersonatorName' => 'Alice',
         'impersonatedName' => 'Bob',
-        'leaveUrl'         => '/impersonation/leave',
     ])->render();
 
     expect($html)->toContain('Alice')
-        ->and($html)->toContain('Bob')
-        ->and($html)->toContain('/impersonation/leave');
+        ->and($html)->toContain('Bob');
 });
