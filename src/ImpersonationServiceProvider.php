@@ -7,6 +7,7 @@ namespace Chuimi\FilamentImpersonation;
 use Chuimi\FilamentImpersonation\Support\ImpersonationActivity;
 use Chuimi\FilamentImpersonation\Support\ImpersonationAuthorization;
 use Chuimi\FilamentImpersonation\Support\RedirectResolver;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
 class ImpersonationServiceProvider extends ServiceProvider
@@ -35,6 +36,13 @@ class ImpersonationServiceProvider extends ServiceProvider
             __DIR__ . '/../resources/lang',
             'filament-impersonation'
         );
+
+        if (config('filament-impersonation.routes.enabled', true)) {
+            Route::middleware(config('filament-impersonation.routes.middleware', ['web', 'auth']))
+                ->prefix(config('filament-impersonation.routes.prefix', 'impersonation'))
+                ->name(config('filament-impersonation.routes.name', 'impersonation.'))
+                ->group(__DIR__ . '/../routes/web.php');
+        }
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
