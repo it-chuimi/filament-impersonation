@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Chuimi\FilamentImpersonation;
 
+use Chuimi\FilamentImpersonation\Listeners\HandleImpersonationLogout;
 use Chuimi\FilamentImpersonation\Support\ImpersonationActivity;
 use Chuimi\FilamentImpersonation\Support\ImpersonationAuthorization;
 use Chuimi\FilamentImpersonation\Support\RedirectResolver;
+use Illuminate\Auth\Events\Logout;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 
@@ -27,6 +30,8 @@ class ImpersonationServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        Event::listen(Logout::class, HandleImpersonationLogout::class);
+
         $this->loadViewsFrom(
             __DIR__ . '/../resources/views',
             'filament-impersonation'
