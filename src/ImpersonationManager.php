@@ -107,7 +107,8 @@ class ImpersonationManager
         }
 
         $sessionKey = config('filament-impersonation.session_key');
-        $guard      = $payload['operator_guard'] ?? $this->resolveGuard();
+        $rawGuard   = $payload['operator_guard'] ?? null;
+        $guard      = $this->isValidGuard($rawGuard) ? (string) $rawGuard : $this->resolveGuard();
 
         [$operator, $logoutReason] = $this->resolveOperatorForRestore($payload, $guard);
 
@@ -247,6 +248,17 @@ class ImpersonationManager
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    /**
+     * Return true only when $guard is a non-empty string that exists in config('auth.guards').
+     * Accepts mixed input because the value is read from an untrusted session payload.
+     */
+    private function isValidGuard(mixed $guard): bool
+    {
+        return is_string($guard)
+            && $guard !== ''
+            && config("auth.guards.{$guard}") !== null;
     }
 
     private function resolveGuard(): string
