@@ -704,3 +704,105 @@ it('records duration_seconds, operator_user_type and impersonated_user_type in t
         ->and($activity->properties['operator_user_type'])->toBe(User::class)
         ->and($activity->properties['impersonated_user_type'])->toBe(User::class);
 });
+
+// ---------------------------------------------------------------------------
+// 21. Guard validation — operator_guard is validated before use in stop()
+// ---------------------------------------------------------------------------
+
+it('stop() does not throw when operator_guard is an invalid guard string', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload                   = session()->get(config('filament-impersonation.session_key'));
+    $payload['operator_guard'] = 'nonexistent_guard';
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    expect(fn () => app(ImpersonationManager::class)->stop())->not()->toThrow(\Throwable::class);
+});
+
+it('stop() falls back to the resolved guard, restores the operator and clears payload when operator_guard is invalid', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload                   = session()->get(config('filament-impersonation.session_key'));
+    $payload['operator_guard'] = 'nonexistent_guard';
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    $result = app(ImpersonationManager::class)->stop();
+
+    expect($result)->toBeTrue();
+    expect(Auth::id())->toBe($operator->id);
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
+    expect(session()->has(config('filament-impersonation.session_key')))->toBeFalse();
+});
+
+it('stop() does not throw when operator_guard key is absent from payload', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload = session()->get(config('filament-impersonation.session_key'));
+    unset($payload['operator_guard']);
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    expect(fn () => app(ImpersonationManager::class)->stop())->not()->toThrow(\Throwable::class);
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
+});
+
+it('stop() does not throw when operator_guard is an empty string', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload                   = session()->get(config('filament-impersonation.session_key'));
+    $payload['operator_guard'] = '';
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    expect(fn () => app(ImpersonationManager::class)->stop())->not()->toThrow(\Throwable::class);
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
+});
+
+it('stopForLogout() does not throw when operator_guard is invalid and clears the impersonation session', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload                   = session()->get(config('filament-impersonation.session_key'));
+    $payload['operator_guard'] = 'nonexistent_guard';
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    expect(fn () => app(ImpersonationManager::class)->stopForLogout())->not()->toThrow(\Throwable::class);
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
+});
+
+it('corrupting impersonated_guard has no effect on operator restoration in stop()', function () {
+    // impersonated_guard is stored in the payload but never used in auth or
+    // restore logic — only operator_guard matters for guard resolution.
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    $payload                      = session()->get(config('filament-impersonation.session_key'));
+    $payload['impersonated_guard'] = 'nonexistent_guard';
+    session()->put(config('filament-impersonation.session_key'), $payload);
+
+    $result = app(ImpersonationManager::class)->stop();
+
+    expect($result)->toBeTrue();
+    expect(Auth::id())->toBe($operator->id);
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
+});
