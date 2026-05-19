@@ -214,3 +214,19 @@ it('action closure calls ImpersonationManager::start and RedirectResolver::after
     expect($fakeResolver->afterStartCalled)->toBeTrue();
     expect($fakeResolver->afterStartImpersonated)->toBe($target);
 });
+
+// ---------------------------------------------------------------------------
+// 9. navigate: false is hardcoded in both redirect call sites
+//
+//    Filament 5's CanRedirect::redirect() delegates entirely to getLivewire(),
+//    which requires a running Livewire component — unavailable in unit tests.
+//    This test verifies at the source level that both redirect call sites pass
+//    navigate: false, ensuring AuthenticateSession middleware re-runs with the
+//    new authenticated user after every impersonation redirect.
+// ---------------------------------------------------------------------------
+
+it('action source contains navigate: false in both redirect call sites', function () {
+    $source = file_get_contents(__DIR__ . '/../../../src/Filament/Actions/ImpersonateAction.php');
+
+    expect(substr_count($source, 'navigate: false'))->toBeGreaterThanOrEqual(2);
+});
