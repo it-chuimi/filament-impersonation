@@ -99,10 +99,13 @@ class ImpersonateAction extends Action
                 impersonated: $record,
             );
 
+            // navigate: false forces a full HTTP redirect instead of Livewire SPA
+            // navigation, ensuring middleware (including AuthenticateSession) re-runs
+            // with the new authenticated user on the next request.
             if ($url instanceof RedirectResponse) {
-                $this->redirect($url->getTargetUrl());
+                $this->redirect($url->getTargetUrl(), navigate: false);
             } elseif (is_string($url)) {
-                $this->redirect($url);
+                $this->redirect($url, navigate: false);
             }
         });
     }

@@ -806,3 +806,99 @@ it('corrupting impersonated_guard has no effect on operator restoration in stop(
     expect(Auth::id())->toBe($operator->id);
     expect(app(ImpersonationManager::class)->isImpersonating())->toBeFalse();
 });
+
+// ---------------------------------------------------------------------------
+// 22. AuthenticateSession compatibility — start()
+// ---------------------------------------------------------------------------
+
+it('start() stores the active guard in session for AuthenticateSession', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    expect(session('guard'))->toBe('web');
+});
+
+it('start() writes password_hash_{guard} for the impersonated user', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    // The key must be present even when getAuthPassword() returns null
+    // (e.g. no password column), ensuring AuthenticateSession sees a consistent value.
+    expect(session()->exists('password_hash_web'))->toBeTrue();
+    expect(session('password_hash_web'))->toBe($target->getAuthPassword());
+});
+
+// ---------------------------------------------------------------------------
+// 23. AuthenticateSession compatibility — stop() normal
+// ---------------------------------------------------------------------------
+
+it('stop() writes the active guard in session after restoring operator', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+    app(ImpersonationManager::class)->stop();
+
+    expect(session('guard'))->toBe('web');
+});
+
+it('stop() writes password_hash_{guard} for the restored operator', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+    app(ImpersonationManager::class)->stop();
+
+    expect(session()->exists('password_hash_web'))->toBeTrue();
+    expect(session('password_hash_web'))->toBe($operator->getAuthPassword());
+});
+
+it('stop() password_hash_{guard} reflects operator after restoration, not target', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    // Hash during impersonation belongs to target.
+    expect(session('password_hash_web'))->toBe($target->getAuthPassword());
+
+    app(ImpersonationManager::class)->stop();
+
+    // After stop, hash must match the restored operator, not the target.
+    expect(session('password_hash_web'))->toBe($operator->getAuthPassword());
+    expect(Auth::id())->toBe($operator->id);
+});
+
+// ---------------------------------------------------------------------------
+// 24. password_hash is not set in forced stop paths
+// ---------------------------------------------------------------------------
+
+it('forced stop does not write password_hash_{guard} for operator', function () {
+    config()->set('filament-impersonation.is_restorable_user', fn ($user) => false);
+
+    $operator = makeOperator();
+    $target   = makeTarget();
+
+    loginAs($operator);
+    startImpersonation($target);
+
+    // Capture hash that was set during start (target's hash).
+    $hashAfterStart = session('password_hash_web');
+
+    app(ImpersonationManager::class)->stop();
+
+    // Forced stop invalidates the session; the hash key should no longer exist.
+    expect(session()->has('password_hash_web'))->toBeFalse();
+
+    // And the user must not be authenticated.
+    expect(Auth::check())->toBeFalse();
+});

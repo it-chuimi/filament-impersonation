@@ -89,9 +89,17 @@ class ImpersonationManager
 
         session()->put(config('filament-impersonation.session_key'), $payload);
 
+        // Store the active guard in session before switching users.
+        // Filament AuthenticateSession reads this key to resolve the guard on the next request.
+        session(['guard' => $guard]);
+
         Auth::guard($guard)->login($target);
 
-        session()->regenerate();
+        // Sync the password hash for the new user immediately after login.
+        // AuthenticateSession checks session('password_hash_{guard}') on every request.
+        // SessionGuard::login() already calls session->migrate(true) internally,
+        // so no additional session()->regenerate() is needed here.
+        session()->put('password_hash_' . $guard, $target->getAuthPassword());
     }
 
     /**
@@ -149,7 +157,13 @@ class ImpersonationManager
             return true;
         }
 
-        // Login succeeded — register the normal stop and finalize.
+        // Login succeeded: sync guard and password hash for AuthenticateSession.
+        // SessionGuard::login() already called session->migrate(true) internally,
+        // so no additional session()->regenerate() is needed here.
+        session(['guard' => $guard]);
+        session()->put('password_hash_' . $guard, $operator->getAuthPassword());
+
+        // Register the normal stop and finalize.
         try {
             $this->activity->recordStop($payload, $operator);
         } catch (\Throwable $e) {
@@ -157,7 +171,6 @@ class ImpersonationManager
         }
 
         session()->forget($sessionKey);
-        session()->regenerate();
 
         return true;
     }
