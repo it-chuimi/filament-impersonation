@@ -1,8 +1,29 @@
 {
     "name": "chuimi/filament-impersonation",
     "description": "Controlled user impersonation plugin for Filament applications.",
+    "keywords": [
+        "laravel",
+        "filament",
+        "impersonation",
+        "user-impersonation",
+        "audit",
+        "activitylog",
+        "spatie",
+        "admin-panel"
+    ],
+    "homepage": "https://github.com/it-chuimi/filament-impersonation",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "CHUIMI",
+            "homepage": "https://github.com/it-chuimi"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/it-chuimi/filament-impersonation/issues",
+        "source": "https://github.com/it-chuimi/filament-impersonation"
+    },
     "autoload": {
         "psr-4": {
             "Chuimi\\FilamentImpersonation\\": "src/"
