@@ -6,7 +6,9 @@
 
 The package is designed to be reusable across different projects and must not contain references to any private/internal domain, project-specific entities, or application-specific business logic.
 
-This document records the agreed architecture, design decisions, implementation boundaries, and orchestration workflow for future maintainers and AI-assisted development agents.
+This document records the agreed architecture, design decisions, and implementation boundaries for future maintainers and AI-assisted development agents.
+
+This document represents the current state of the package for v0.1.0.
 
 ---
 
@@ -199,21 +201,21 @@ Initial scaffold includes:
 
 ### Real authentication switch
 
-Impersonation must change the authenticated Laravel user for real.
+Impersonation changes the authenticated Laravel user for real.
 
-The package will use:
+The package uses:
 
 ```php
 Auth::guard($guard)->login($targetUser);
 ```
 
-Before switching users, the package must store the original operator context in session.
+Before switching users, the package stores the original operator context in session.
 
 This allows Laravel and Filament to apply permissions, policies, menus, visibility and UI behavior as the impersonated user.
 
 The audit trail must not lose the real operator.
 
-Actions performed during impersonation must be enriched with:
+Actions performed during impersonation can be enriched with:
 
 - `operator_user_id`
 - `operator_user_type`
@@ -245,14 +247,16 @@ During start:
 During stop:
 
 - recover the stored operator guard
-- restore the operator with the stored guard
+- validate it against `config('auth.guards')` before use
+- if the stored value is missing, empty, or not a known guard, fall back to auto-detecting the current guard
+- restore the operator with the resolved guard
 - if restoration is not possible, logout safely
 
 ### Reason requirement
 
 A reason is mandatory when starting impersonation.
 
-Recommended configuration:
+Configuration:
 
 ```php
 'reason' => [
@@ -271,7 +275,7 @@ Later actions are linked to the start event using `impersonation_activity_id`.
 
 Nested impersonation is forbidden.
 
-If an impersonation is already active, `start()` must reject a new impersonation.
+If an impersonation is already active, `start()` rejects a new impersonation.
 
 The user must stop the current impersonation before starting another.
 
@@ -291,17 +295,15 @@ operator_user_id -> impersonated_user_id -> impersonation_activity_id
 
 Self impersonation is always forbidden.
 
-If the operator and target user have the same `getAuthIdentifier()`, `start()` must be blocked.
+If the operator and target user have the same `getAuthIdentifier()` and the same class, `start()` is blocked.
 
 There is no `allow_self_impersonation` configuration.
-
-Tests must validate that this case is blocked.
 
 ### Session payload
 
 The package stores a structured payload in session.
 
-The payload must include:
+The payload includes:
 
 ```php
 [
@@ -318,7 +320,7 @@ The payload must include:
 ]
 ```
 
-The manager API must include:
+The manager API includes:
 
 ```php
 public function isImpersonating(): bool;
@@ -331,42 +333,49 @@ public function payload(): ?array;
 - `array` if impersonation is active
 - `null` if impersonation is not active
 
-It must not throw an exception when there is no active impersonation.
+It does not throw an exception when there is no active impersonation.
 
 ### Session regeneration
 
-The session must be regenerated when impersonation starts and when it stops.
+The session is regenerated when impersonation starts and when it stops normally.
+The session is invalidated on forced stop.
 
 **Start flow:**
 
 1. validate package is enabled
-2. validate there is no active impersonation
-3. validate target is not self
-4. validate target is not protected
-5. validate authorization
-6. validate reason
-7. resolve guard
-8. create `impersonation.started`
-9. store payload in session
-10. login as target user
-11. regenerate session
+2. resolve guard
+3. resolve operator from guard — abort with `RuntimeException` if no authenticated user
+4. validate there is no active impersonation (no nested sessions)
+5. validate target is not self
+6. validate target is not protected
+7. validate authorization
+8. validate reason
+9. create `impersonation.started` — mandatory; if this fails, `ImpersonationStartFailedException` is thrown and start is aborted with no session written
+10. store payload in session
+11. login as target user
+12. regenerate session
 
-**Stop flow:**
+**Normal stop flow:**
 
-1. read payload
-2. attempt to restore the operator
-3. register finalization event where applicable
-4. clean impersonation payload
-5. login as operator if restorable
-6. regenerate session
+1. read payload — return `false` immediately if no impersonation is active
+2. resolve and validate the guard (fallback to auto-detect if stored value is invalid or unknown)
+3. resolve original operator via user model lookup and `is_restorable_user` check
+4. if operator is unresolvable or not restorable → forced stop (see below)
+5. attempt `Auth::guard($guard)->login($operator)` — if this throws → forced stop with `restore_failed`
+6. only if login succeeds: record `impersonation.stopped` (non-blocking — failure is reported via `report()` but does not block cleanup)
+7. clear the impersonation session key
+8. regenerate session
 
-If the operator cannot be restored:
+**Forced stop flow:**
 
-1. clean impersonation payload
-2. logout completely
-3. invalidate/regenerate session as appropriate
+Triggered when the operator cannot be resolved or found, is not restorable, or the login call throws.
 
-The order must avoid losing the payload before it is needed.
+1. record `impersonation.stopped_by_logout` with the applicable reason (non-blocking)
+2. clear the impersonation session key
+3. `Auth::guard($guard)->logout()`
+4. `session()->invalidate()` and `session()->regenerateToken()`
+
+`impersonation.stopped` is never recorded in a forced stop. The audit trail uses `impersonation.stopped_by_logout` instead.
 
 ### Package enabled flag
 
@@ -378,17 +387,17 @@ Configuration:
 
 If `config('filament-impersonation.enabled') === false`, then:
 
-- `start()` must throw a package-specific exception, for example `PackageDisabledException`
-- `canImpersonate()` must return `false`
-- the future Filament Action must be hidden or unavailable
+- `start()` throws `PackageDisabledException`
+- `canImpersonate()` returns `false`
+- `ImpersonateAction` is hidden via its `visible()` check
 
-`stop()` may remain idempotent and silent if there is no active impersonation.
+`stop()` remains idempotent and returns `false` if there is no active impersonation.
 
 ### Stop behavior
 
 `stop()` is idempotent.
 
-Recommended signature:
+Signature:
 
 ```php
 public function stop(): bool;
@@ -405,7 +414,7 @@ This protects against double clicks, stale tabs, expired sessions and manual rou
 
 ### Operator restoration
 
-When stopping impersonation, the package must attempt to restore the original operator.
+When stopping impersonation, the package attempts to restore the original operator.
 
 If the original operator:
 
@@ -413,18 +422,18 @@ If the original operator:
 - cannot be loaded
 - cannot be restored according to project logic
 
-then the package must:
+then the package:
 
-- logout completely on the corresponding guard
-- clean all impersonation session keys
-- register a finalization event if possible
-- let authentication middleware redirect to login or a safe destination
+- logouts completely on the corresponding guard
+- cleans all impersonation session keys
+- registers `impersonation.stopped_by_logout` if possible
+- lets authentication middleware redirect to login or a safe destination
 
 The impersonated user must not remain authenticated in an ambiguous state.
 
 ### Restorable user callback
 
-The package must not assume how an application marks users as disabled.
+The package does not assume how an application marks users as disabled.
 
 Configuration:
 
@@ -436,7 +445,7 @@ Rules:
 
 - the package always checks that the operator exists
 - if `is_restorable_user` is callable, it decides whether the operator may be restored
-- if the callback returns `false`, logout completely
+- if the callback returns `false`, forced stop with `operator_not_restorable`
 - if there is no callback, existence is enough
 
 Example:
@@ -457,7 +466,7 @@ Configuration:
 
 Rules:
 
-1. If `user_model` contains a FQCN, use it.
+1. If `user_model` contains a FQCN, use it. If the class does not exist → forced stop with `user_model_not_resolvable`. An explicitly configured but invalid class is never silently bypassed.
 2. If `user_model` is `null`, resolve the provider from:
    ```
    config("auth.guards.{$guard}.provider")
@@ -470,7 +479,7 @@ Rules:
    ```
    config('auth.providers.users.model')
    ```
-5. If the model cannot be resolved or the operator cannot be loaded, logout completely and clean session.
+5. If the model cannot be resolved or the operator cannot be loaded, forced stop with `user_model_not_resolvable` or `restore_failed`.
 
 ### Authorization
 
@@ -487,19 +496,20 @@ Configuration:
 
 Rules:
 
-- If `can_impersonate` is callable, it is used as the main authorization criterion.
-- If no callback exists, roles and permissions are evaluated.
-- Empty `operator_roles` means no role requirement.
-- Empty `operator_permissions` means no permission requirement.
-- If roles/permissions are required but the model does not support the needed methods, deny.
+- If `can_impersonate` is callable, it is the sole authorization criterion. Roles and permissions are not evaluated.
+- If no callback is set, `operator_roles` and `operator_permissions` are both evaluated (AND logic: both checks must pass if both are configured).
+- `operator_roles`: if not empty, the operator must have at least one listed role (`hasAnyRole`). Empty array = no role check.
+- `operator_permissions`: if not empty, the operator must have all listed permissions. Empty array = no permission check.
+- If a role check is required but the model does not implement `hasAnyRole()`, the check is denied for safety.
+- If a permission check is required but the model does not implement `can()`, the check is denied for safety.
 
-The callback can be more powerful than roles/permissions, but it must not bypass critical package rules such as:
+The callback and roles/permissions cannot bypass the safety rules enforced unconditionally by the manager:
 
-- package disabled
-- active impersonation already exists
-- self impersonation
-- protected target users
-- safe restoration
+- package disabled check
+- active impersonation block (no nested sessions)
+- self impersonation block
+- protected user block
+- mandatory start activity
 
 ### Protected users
 
@@ -515,9 +525,9 @@ Configuration:
 
 Rules:
 
-- If `protected_roles` has values, check whether the target user has any of those roles.
-- If `protected_roles` is not empty and the model does not support `hasAnyRole()`, consider the user protected or deny for safety.
-- If `is_protected_user` is callable, execute it.
+- `protected_roles` is evaluated first. If the array is not empty and the target has any of those roles, impersonation is denied.
+- If `protected_roles` is not empty and the model does not support `hasAnyRole()`, the target is considered protected for safety.
+- `is_protected_user` is evaluated second, if callable.
 - If either mechanism marks the user as protected, impersonation is denied.
 
 Example:
@@ -542,7 +552,7 @@ Events:
 
 Registered when impersonation starts successfully.
 
-This event is mandatory. If creating this activity fails, impersonation must not start.
+This event is mandatory. If creating this activity fails, `ImpersonationStartFailedException` is thrown and impersonation does not start.
 
 Properties:
 
@@ -563,6 +573,10 @@ The created activity ID is stored in session as `impersonation_activity_id`.
 
 Registered when impersonation stops normally and the original operator is restored.
 
+Recorded only after `Auth::guard($guard)->login($operator)` succeeds. If login throws, this event is never registered and the flow falls back to `impersonation.stopped_by_logout` with `restore_failed`.
+
+If this log fails after a successful login, the package still exits impersonation safely. The failure is forwarded to Laravel's exception handler via `report()`.
+
 Properties:
 
 - `operator_user_id`
@@ -580,11 +594,11 @@ Properties:
 
 `duration_seconds` is calculated between `started_at` and `stopped_at`.
 
-If this log fails, the package must still exit impersonation safely.
-
 ### `impersonation.stopped_by_logout`
 
-Registered when impersonation ends through logout or because the original operator cannot be safely restored.
+Registered when impersonation ends through a manual logout or because the original operator cannot be safely restored.
+
+If this log fails, the package still cleans the session and performs logout safely. The failure is forwarded via `report()`.
 
 Properties:
 
@@ -602,7 +616,7 @@ Properties:
 - `user_agent`
 - `logout_reason`
 
-Initial `logout_reason` values:
+`logout_reason` values:
 
 - `operator_not_found`
 - `operator_not_restorable`
@@ -610,29 +624,28 @@ Initial `logout_reason` values:
 - `manual_logout`
 - `restore_failed`
 
-If this log fails, the package must still clean session and logout/restore safely.
-
 ---
 
 ## Logout handling
 
-Manual logout during active impersonation will be detected using a listener for:
+Manual logout during active impersonation is detected using a listener for:
 
 ```
 Illuminate\Auth\Events\Logout
 ```
 
+The listener is registered automatically by `ImpersonationServiceProvider`.
+
 Rules:
 
 - if there is no active impersonation, do nothing
-- if there is active impersonation, register `impersonation.stopped_by_logout`
-- use `logout_reason = manual_logout`
-- clean impersonation session payload
-- do not restore the operator, because the user explicitly logged out
+- if there is active impersonation, call `stopForLogout(ManualLogout)`
+- `stopForLogout` records `impersonation.stopped_by_logout` with `logout_reason = manual_logout` (non-blocking)
+- cleans impersonation session payload
+- does not restore the operator — the user explicitly logged out
+- does not block the normal Laravel logout flow
 
-The service must avoid double registration — for example, normal `stop()` must not also trigger `stopped_by_logout`.
-
-**This listener is outside the first implementation block.**
+The service avoids double registration: normal `stop()` does not trigger the logout listener because `stop()` restores the operator rather than logging out.
 
 ---
 
@@ -646,7 +659,7 @@ Trait:
 Chuimi\FilamentImpersonation\Concerns\HasImpersonationActivityContext
 ```
 
-The consumer adds it manually to auditable models.
+The consumer adds it manually only to auditable models that should receive impersonation context.
 
 If a model uses both `LogsActivity` and `HasImpersonationActivityContext`, its activities are enriched with:
 
@@ -658,53 +671,51 @@ If a model uses both `LogsActivity` and `HasImpersonationActivityContext`, its a
 
 If a model does not use the trait, the package does not modify its logs.
 
-There will be no global observer and no middleware that modifies all logs.
-
-**This trait is outside the first implementation block.**
+There is no global observer and no middleware that modifies all logs. The trait is opt-in per model.
 
 ### Activity hook
 
-The trait will use Spatie's hook:
+The trait uses Spatie's hook:
 
 ```php
 tapActivity(Activity $activity, string $eventName): void
 ```
 
-When impersonation is active, it must:
+When impersonation is active, it:
 
-- retrieve the session payload
-- set `causer_type` and `causer_id` to the original operator
-- merge impersonation context into properties
-- preserve existing properties such as `old` and `attributes`
+- retrieves the session payload
+- sets `causer_type` and `causer_id` directly on the activity to the original operator
+- merges impersonation context into `activity->properties` without overwriting existing keys
 
 If there is no active impersonation, it does nothing.
 
-If the consumer model already defines its own `tapActivity()`, documentation must explain how to integrate both behaviors.
+### Caveats
+
+**tapActivity conflict**: If the consuming model already defines its own `tapActivity()`, both implementations cannot coexist through normal trait resolution. The consumer must manually call the trait method from their own implementation or merge the behavior manually.
+
+**Morph map**: The trait stores `operator_user_type` as the raw Eloquent model FQCN (e.g. `App\Models\User`), not a morph alias. If the consuming application uses a custom morph map, queries filtering on `operator_user_type` must resolve the FQCN, not the alias.
 
 ---
 
 ## Filament Action
 
-The package will provide a reusable Filament Action:
+The package provides a reusable Filament Action:
 
 ```
 Chuimi\FilamentImpersonation\Filament\Actions\ImpersonateAction
 ```
 
-The consumer must add it manually where needed.
+The consumer adds it manually where needed.
 
-The package will not inject it automatically into all `UserResource` classes.
+The package does not inject it automatically into any `UserResource` class.
 
-The Action must include:
+The Action:
 
-- visibility based on authorization
-- reason form
-- minimum reason validation from config
-- call to `ImpersonationManager`
-- success/error notifications using translations
-- redirect after successful start
-
-**This Action is outside the first implementation block.**
+- checks visibility via `ImpersonationManager::canImpersonate()`
+- shows the required reason form with minimum length validation from config
+- calls `ImpersonationManager::start()` and catches all package-specific exceptions
+- shows translated success/error notifications
+- redirects after successful start using `RedirectResolver::afterStart()`
 
 ---
 
@@ -724,20 +735,15 @@ Each value may be:
 - `string`
 - `callable`
 
-Rules:
+Resolution rules:
 
-- If callable, execute with useful context.
-- If string, use it as configured route/URL.
-- If `null`, attempt to resolve Filament current panel dashboard/home.
-- If not resolvable, use the current page or a safe URL.
+- If callable: called with a context array containing `phase`, `operator`, `impersonated`, `payload`, and `request`. If the return value is a `RedirectResponse` or a string, it is used. Otherwise, the fallback applies.
+- If string: used directly if it starts with `http://`, `https://`, or `/`. Otherwise, treated as a named route via `route($value)`. If the named route does not exist, falls back to `'/'`.
+- If `null` (or callable returns a non-string/non-RedirectResponse): falls back to `url()->previous('/')`.
 
-The package must not assume a fixed route such as:
+**Callable exceptions are not caught.** A misconfigured callable will surface to the application's exception handler. This is intentional: misconfigured redirects must be visible to the consuming application.
 
-```
-filament.admin.pages.dashboard
-```
-
-Redirect logic should be centralized in:
+Redirect logic is centralized in:
 
 ```
 Chuimi\FilamentImpersonation\Support\RedirectResolver
@@ -747,7 +753,7 @@ Chuimi\FilamentImpersonation\Support\RedirectResolver
 
 ## Exit route and controller
 
-The normal exit flow will use a POST route and controller.
+The normal exit flow uses a POST route and controller.
 
 Default route:
 
@@ -786,10 +792,10 @@ If `routes.enabled` is `false`:
 The default flow is:
 
 ```
-banner -> POST route('impersonation.stop') -> controller -> manager stop() -> redirect_after_stop
+banner -> POST route('impersonation.stop') -> StopImpersonationController -> ImpersonationManager::stop() -> RedirectResolver::afterStop()
 ```
 
-**Routes and controller are outside the first implementation block.**
+The controller captures the session payload and the impersonated user before calling `stop()`, because `stop()` clears the session.
 
 ---
 
@@ -797,17 +803,15 @@ banner -> POST route('impersonation.stop') -> controller -> manager stop() -> re
 
 The impersonation banner is a security signal.
 
-It must be shown whenever there is an active impersonation inside a panel where the plugin is registered.
+It is shown whenever there is an active impersonation inside a panel where the plugin is registered.
 
-The banner is not optional and is not disableable by configuration in the first version.
-
-The package will provide:
+The package provides:
 
 ```
 Chuimi\FilamentImpersonation\Filament\ImpersonationPlugin
 ```
 
-The consumer must register it manually in each Filament panel where impersonation should be supported:
+The consumer registers it manually in each Filament panel where impersonation should be supported:
 
 ```php
 ->plugins([
@@ -817,25 +821,31 @@ The consumer must register it manually in each Filament panel where impersonatio
 
 Rules:
 
-- the package does not automatically register the plugin in all panels
-- once registered in a panel, the banner is mandatory while impersonation is active
-- the banner must include a visible "Leave impersonation" button
+- the package does not automatically register the plugin in any panel
+- once registered in a panel, the banner is rendered at `PanelsRenderHook::BODY_START`
+- the banner is shown conditionally: only when `ImpersonationManager::isImpersonating()` returns `true`
+- the banner includes a "Leave impersonation" button that submits a POST form to `route('impersonation.stop')`
 - if a project has multiple panels where an impersonated session may continue, the plugin must be registered in all of them
-
-**The plugin/banner automatic integration is outside the first implementation block.**
 
 ---
 
 ## Internal structure
 
-Planned structure:
+Current structure:
 
 ```
 src/
 ├─ Concerns/
 │  └─ HasImpersonationActivityContext.php
-├─ Contracts/
 ├─ Exceptions/
+│  ├─ CannotImpersonateSelfException.php
+│  ├─ ImpersonationAlreadyActiveException.php
+│  ├─ ImpersonationStartFailedException.php
+│  ├─ OperatorNotRestorableException.php
+│  ├─ PackageDisabledException.php
+│  ├─ ProtectedUserCannotBeImpersonatedException.php
+│  ├─ UnauthorizedImpersonationException.php
+│  └─ UserModelNotResolvableException.php
 ├─ Filament/
 │  ├─ Actions/
 │  │  └─ ImpersonateAction.php
@@ -856,41 +866,41 @@ src/
 
 Responsibilities:
 
-- `ImpersonationManager`: orchestrates `start`, `stop`, `stopForLogout`, `payload`, `isImpersonating`
+- `ImpersonationManager`: orchestrates `start`, `stop`, `stopForLogout`, `payload`, `isImpersonating`, `canImpersonate`
 - `ImpersonationActivity`: records events in Spatie Activitylog
-- `ImpersonationAuthorization`: handles callbacks, roles, permissions and protected users
-- `ImpersonationLogoutReason`: defines logout reasons, preferably as a PHP 8.2 enum
-- `RedirectResolver`: resolves start/stop redirects
-- `ImpersonateAction`: reusable Filament Action
-- `ImpersonationPlugin`: registers mandatory banner in Filament
-- `StopImpersonationController`: handles normal exit route
-- `HandleImpersonationLogout`: listens to Logout events
-- `HasImpersonationActivityContext`: enriches auditable model activity logs
+- `ImpersonationAuthorization`: evaluates `can_impersonate` callback, roles/permissions, and protected user checks
+- `ImpersonationLogoutReason`: PHP 8.2 backed enum defining forced stop reason values
+- `RedirectResolver`: resolves post-action redirects for start and stop
+- `ImpersonateAction`: reusable Filament Action added manually by the consumer
+- `ImpersonationPlugin`: registers the mandatory banner via Filament render hooks
+- `StopImpersonationController`: handles the normal stop POST route
+- `HandleImpersonationLogout`: listens to `Illuminate\Auth\Events\Logout` to intercept manual logouts
+- `HasImpersonationActivityContext`: opt-in trait for auditable models
 
 ---
 
 ## Exceptions
 
-The package uses custom exceptions instead of generic runtime exceptions.
+The package uses custom exceptions.
 
-Initial exceptions:
+Current exceptions:
 
-- `PackageDisabledException`
-- `ImpersonationAlreadyActiveException`
-- `CannotImpersonateSelfException`
-- `ProtectedUserCannotBeImpersonatedException`
-- `UnauthorizedImpersonationException`
-- `ImpersonationStartFailedException`
-- `OperatorNotRestorableException`
-- `UserModelNotResolvableException`
+- `PackageDisabledException` — thrown by `start()` when the package is disabled
+- `ImpersonationAlreadyActiveException` — thrown by `start()` when a session is already active
+- `CannotImpersonateSelfException` — thrown by `start()` on self-impersonation attempt
+- `ProtectedUserCannotBeImpersonatedException` — thrown by `start()` when target is protected
+- `UnauthorizedImpersonationException` — thrown by `start()` on authorization failure
+- `ImpersonationStartFailedException` — thrown by `start()` when the mandatory start activity cannot be recorded
+- `OperatorNotRestorableException` — available for consumer-side use; manager converts this scenario into a forced stop
+- `UserModelNotResolvableException` — available for consumer-side use; manager converts this scenario into a forced stop
 
-Actions/controllers may translate these exceptions into user-facing notifications.
+Actions and controllers translate start exceptions into user-facing notifications.
 
 ---
 
 ## Public API
 
-No Laravel Facade will be included in the first version.
+No Laravel Facade is included.
 
 Use dependency injection or container resolution:
 
@@ -898,47 +908,69 @@ Use dependency injection or container resolution:
 app(ImpersonationManager::class)
 ```
 
-A Facade may be added later without breaking compatibility.
+A Facade may be added in a future version without breaking compatibility.
 
 ---
 
-## First implementation block
+## Publishables and service provider
 
-The first implementation block focuses only on the core independent of Filament.
+`ImpersonationServiceProvider` handles all registration automatically through Laravel autodiscovery.
 
-**Included:**
+On `register()`:
 
-- `config/filament-impersonation.php`
-- `src/ImpersonationManager.php`
-- `src/Support/ImpersonationActivity.php`
-- `src/Support/ImpersonationAuthorization.php`
-- `src/Support/ImpersonationLogoutReason.php`
-- `src/Exceptions/*`
-- `tests/Feature/ImpersonationManagerTest.php`
+- merges package config with application config
+- registers `ImpersonationAuthorization`, `ImpersonationActivity`, `ImpersonationManager`, and `RedirectResolver` as singletons
 
-**Must validate:**
+On `boot()`:
 
-- `Auth::guard($guard)->login($target)`
-- full session payload with operator/impersonated type/id/guard
-- blocking active impersonation
-- self impersonation always forbidden
-- authorization by callback or roles/permissions
-- `protected_roles` and `is_protected_user`
-- mandatory `impersonation.started`
-- normal `impersonation.stopped`
-- forced `impersonation.stopped_by_logout`
-- session regeneration on start/stop
-- complete logout when the original operator cannot be restored
+- listens for `Illuminate\Auth\Events\Logout` → `HandleImpersonationLogout`
+- loads views from `resources/views` under the `filament-impersonation` namespace
+- loads translations from `resources/lang` under the `filament-impersonation` namespace
+- registers the stop route if `routes.enabled` is `true`
 
-**Out of scope for the first implementation block:**
+Publishable groups:
 
-- `ImpersonateAction`
-- `ImpersonationPlugin`
-- Banner automatic registration
-- `StopImpersonationController`
-- Routes
-- Logout listener
-- `HasImpersonationActivityContext` trait
+- `filament-impersonation-config` → `config_path('filament-impersonation.php')`
+- `filament-impersonation-views` → `resource_path('views/vendor/filament-impersonation')`
+- `filament-impersonation-lang` → `app()->langPath('vendor/filament-impersonation')`
+
+---
+
+## CI and testing
+
+The package is tested on GitHub Actions on every push to `main` and on every pull request.
+
+Matrix:
+
+- PHP 8.2, 8.3, 8.4
+- Ubuntu latest
+
+Pipeline steps:
+
+1. `composer validate --strict`
+2. `composer install --prefer-dist --no-interaction --no-progress`
+3. `php vendor/bin/pest --configuration=phpunit.xml.dist`
+
+Test framework: [Pest](https://pestphp.com/) with PHPUnit, Orchestra Testbench 10, SQLite in-memory.
+
+Test suites defined in `phpunit.xml.dist`:
+
+- `Feature` — main test suite under `tests/Feature/`
+- `RoutesDisabled` — route-disabled scenarios under `tests/RoutesDisabled/`
+
+---
+
+## Out of scope for v0.1.0
+
+The following are explicitly not included in this version:
+
+- **No automatic action injection**: `ImpersonateAction` is never injected automatically into any `UserResource`. The consumer decides where to place it.
+- **No global audit middleware**: `HasImpersonationActivityContext` is opt-in per model. There is no global observer or middleware that modifies all activitylog entries.
+- **No Facade**: `ImpersonationManager` is accessed via DI or `app()`. No `Impersonation::` facade is provided.
+- **No advanced configuration UI**: there is no Filament settings page or admin panel for the package configuration.
+- **No distributed concurrency locks**: concurrent stop calls on the same session are handled by PHP's native session locking at the server level. No advisory locks or cache-based locks are implemented.
+- **No morph map special support**: `operator_user_type` is stored as the Eloquent model FQCN. The package documents the caveat but does not resolve morph aliases automatically.
+- **No consumer application-specific logic**: the package contains no assumptions about model naming, panel structure, or business rules of any consuming application.
 
 ---
 
@@ -998,8 +1030,8 @@ If the design changes, update this file in the same pull request or commit serie
 
 ## Semantic versioning
 
-The package will be published using semantic versioning.
+The package is published using semantic versioning.
 
 Breaking changes to public API, config keys, method signatures or expected behavior must be treated as major-version changes once the package is released.
 
-Before the first stable release, changes may still happen, but they should be documented clearly.
+Before the first stable release, changes may still happen, but they must be documented clearly.
