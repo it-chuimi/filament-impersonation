@@ -80,7 +80,7 @@ Full details in [docs/SECURITY.md](docs/SECURITY.md).
 | Document | Description |
 |---|---|
 | [Integration guide](docs/INTEGRATION.md) | Installation, plugin registration, authorization, redirects, audit trait, multi-guard |
-| [Security guide](docs/SECURITY.md) | Security model, audit events, CSRF, known risks, design decisions |
+| [Security guide](docs/SECURITY.md) | Security model, audit events, CSRF, known risks, design decisions, audit queries for administrators |
 | [Architecture](docs/ARCHITECTURE.md) | Design decisions, session payload, activity log events, internal flow |
 | [Architecture map](docs/ARCHITECTURE_MAP.md) | Component overview and sequence diagrams |
 
