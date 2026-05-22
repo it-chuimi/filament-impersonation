@@ -212,7 +212,182 @@ If you disable the default route (`routes.enabled = false`) and implement your o
 
 ---
 
-## 8. CI and test coverage
+## 8. Auditing impersonation activity
+
+The package does not create a dedicated impersonation audit table. Audit data lives in two places:
+
+| What | Where |
+|---|---|
+| Active impersonation session | Laravel session store (e.g. database, Redis) under the configured session key |
+| Historical audit trail | `activity_log` table, via `spatie/laravel-activitylog` |
+
+To query the historical audit, filter `activity_log` by:
+
+```sql
+log_name = 'impersonation'
+```
+
+The `log_name` value is configurable via `activity_log_name` in `config/filament-impersonation.php` (default: `impersonation`).
+
+There is no dedicated UI for reviewing impersonation audit data. Administrators access it directly through the database or through any query tool connected to the application database.
+
+### Events and their meaning
+
+| `description` | When it is recorded | Blocking |
+|---|---|---|
+| `impersonation.started` | Before the user switch. Contains the mandatory reason. | **Yes** — start is aborted if this fails |
+| `impersonation.stopped` | When impersonation ends normally and the operator is restored | No — failure is reported via `report()` but session cleanup still completes |
+| `impersonation.stopped_by_logout` | Manual logout, operator not restorable, or any forced exit | No — same as above |
+
+The `reason` for the impersonation is stored only in `impersonation.started`. Subsequent events reference the start event through `properties->>'impersonation_activity_id'`.
+
+### `logout_reason` values (only in `impersonation.stopped_by_logout`)
+
+| Value | Meaning |
+|---|---|
+| `manual_logout` | User explicitly triggered logout during impersonation. Operator is **not** restored. |
+| `operator_not_found` | Operator no longer exists in the database |
+| `operator_not_restorable` | `is_restorable_user` callback returned `false` |
+| `user_model_not_resolvable` | User model class could not be resolved |
+| `restore_failed` | `Auth::guard()->login()` threw or the restorable check threw |
+
+### Manual logout and the audit record
+
+When the impersonated user triggers a standard Laravel logout (`Auth::logout()`), the package:
+
+1. Intercepts the `Illuminate\Auth\Events\Logout` event.
+2. Records `impersonation.stopped_by_logout` with `logout_reason = manual_logout`.
+3. Does **not** restore the original operator — the user explicitly chose to log out.
+
+After a manual logout the operator must authenticate again via the login page.
+
+### Window or tab close (no explicit logout)
+
+Closing the browser window or tab does **not** trigger a Laravel logout request. The impersonation session remains in the session store until:
+
+- the session expires naturally (controlled by `SESSION_LIFETIME`); or
+- the user returns and triggers a normal stop or logout.
+
+If the session expires without an explicit logout or stop, **no `impersonation.stopped_by_logout` event is generated**. The `activity_log` will contain an `impersonation.started` entry with no matching stop event for that session.
+
+Administrators should account for this gap when auditing: an unmatched `impersonation.started` with an old `created_at` likely corresponds to a session that expired silently.
+
+### PostgreSQL audit queries
+
+The following queries assume PostgreSQL with `spatie/laravel-activitylog`. Adjust the cast `::bigint` to `::integer` if your `activity_log.id` column uses `int` instead of `bigint`.
+
+**Recent impersonation events (all types)**
+
+```sql
+SELECT
+    id,
+    description,
+    properties->>'operator_user_id'          AS operator_id,
+    properties->>'impersonated_user_id'      AS impersonated_id,
+    properties->>'reason'                    AS reason,
+    properties->>'started_at'               AS started_at,
+    properties->>'stopped_at'               AS stopped_at,
+    properties->>'duration_seconds'         AS duration_seconds,
+    properties->>'logout_reason'            AS logout_reason,
+    properties->>'ip_address'               AS ip_address,
+    created_at
+FROM activity_log
+WHERE log_name = 'impersonation'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**Only `impersonation.started` (includes mandatory reason)**
+
+```sql
+SELECT
+    id,
+    properties->>'operator_user_id'          AS operator_id,
+    properties->>'impersonated_user_id'      AS impersonated_id,
+    properties->>'reason'                    AS reason,
+    properties->>'started_at'               AS started_at,
+    properties->>'ip_address'               AS ip_address,
+    created_at
+FROM activity_log
+WHERE log_name = 'impersonation'
+  AND description = 'impersonation.started'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**Only `impersonation.stopped` (normal exits)**
+
+```sql
+SELECT
+    id,
+    properties->>'operator_user_id'                 AS operator_id,
+    properties->>'impersonated_user_id'             AS impersonated_id,
+    properties->>'impersonation_activity_id'        AS start_event_id,
+    properties->>'started_at'                       AS started_at,
+    properties->>'stopped_at'                       AS stopped_at,
+    (properties->>'duration_seconds')::integer      AS duration_seconds,
+    properties->>'ip_address'                       AS ip_address,
+    created_at
+FROM activity_log
+WHERE log_name = 'impersonation'
+  AND description = 'impersonation.stopped'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**Only `impersonation.stopped_by_logout` (forced exits)**
+
+```sql
+SELECT
+    id,
+    properties->>'operator_user_id'                 AS operator_id,
+    properties->>'impersonated_user_id'             AS impersonated_id,
+    properties->>'impersonation_activity_id'        AS start_event_id,
+    properties->>'logout_reason'                    AS logout_reason,
+    properties->>'started_at'                       AS started_at,
+    properties->>'stopped_at'                       AS stopped_at,
+    (properties->>'duration_seconds')::integer      AS duration_seconds,
+    properties->>'ip_address'                       AS ip_address,
+    created_at
+FROM activity_log
+WHERE log_name = 'impersonation'
+  AND description = 'impersonation.stopped_by_logout'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**Join start and end events (full session view)**
+
+Links each `impersonation.started` with its corresponding stop event via `impersonation_activity_id`:
+
+```sql
+SELECT
+    s.id                                                AS start_event_id,
+    s.properties->>'operator_user_id'                  AS operator_id,
+    s.properties->>'impersonated_user_id'              AS impersonated_id,
+    s.properties->>'reason'                            AS reason,
+    s.properties->>'started_at'                        AS started_at,
+    s.properties->>'ip_address'                        AS started_ip,
+    e.description                                      AS end_event,
+    e.properties->>'stopped_at'                        AS stopped_at,
+    (e.properties->>'duration_seconds')::integer       AS duration_seconds,
+    e.properties->>'logout_reason'                     AS logout_reason
+FROM activity_log s
+LEFT JOIN activity_log e
+       ON e.log_name    = 'impersonation'
+      AND e.description IN ('impersonation.stopped', 'impersonation.stopped_by_logout')
+      AND (e.properties->>'impersonation_activity_id')::bigint = s.id
+WHERE s.log_name    = 'impersonation'
+  AND s.description = 'impersonation.started'
+ORDER BY s.created_at DESC
+LIMIT 50;
+```
+
+A `NULL` value in `end_event` indicates a session with no recorded stop — either currently active, or expired without an explicit logout (see [Window or tab close](#window-or-tab-close-no-explicit-logout) above).
+
+---
+
+## 9. CI and test coverage
 
 The package is tested against PHP 8.2, 8.3, and 8.4 on every push to `main` and on every pull request using GitHub Actions.
 

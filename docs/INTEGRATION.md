@@ -277,6 +277,8 @@ The `causer_id` and `causer_type` of the activity are set to the real operator (
 
 When impersonation is not active, the trait does nothing.
 
+For SQL queries to review the historical audit trail in the `activity_log` table, see [Auditing impersonation activity](SECURITY.md#8-auditing-impersonation-activity) in the security guide.
+
 ---
 
 ## 10. `tapActivity` conflict
