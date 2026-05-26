@@ -79,3 +79,52 @@ it('plugin registration does not register routes or modify config', function () 
     expect(config('filament-impersonation'))->toBe($configBefore);
     expect(Route::getRoutes()->count())->toBe($routesBefore);
 });
+
+// ---------------------------------------------------------------------------
+// 6. banner_view config — custom view is honored
+// ---------------------------------------------------------------------------
+
+it('register() uses the view name from banner_view config when overridden', function () {
+    // Register an alias namespace pointing to the existing views directory
+    // so the custom view name resolves to a real file without any fixtures.
+    app('view')->addNamespace(
+        'custom-banner-test',
+        realpath(__DIR__ . '/../../../resources/views'),
+    );
+    config(['filament-impersonation.banner_view' => 'custom-banner-test::banner']);
+
+    $panel = new Panel();
+    ImpersonationPlugin::make()->register($panel);
+
+    $hooks   = (new ReflectionProperty(Panel::class, 'renderHooks'))->getValue($panel);
+    $closure = $hooks[PanelsRenderHook::BODY_START][''][0];
+    $result  = $closure();
+
+    expect($result)->toBeInstanceOf(View::class)
+        ->and($result->name())->toBe('custom-banner-test::banner');
+});
+
+// ---------------------------------------------------------------------------
+// 7. banner_view config — custom view receives impersonatorName / impersonatedName
+// ---------------------------------------------------------------------------
+
+it('render hook passes impersonatorName and impersonatedName to a custom banner view', function () {
+    app('view')->addNamespace(
+        'custom-banner-test',
+        realpath(__DIR__ . '/../../../resources/views'),
+    );
+    config(['filament-impersonation.banner_view' => 'custom-banner-test::banner']);
+
+    $panel = new Panel();
+    ImpersonationPlugin::make()->register($panel);
+
+    $hooks   = (new ReflectionProperty(Panel::class, 'renderHooks'))->getValue($panel);
+    $closure = $hooks[PanelsRenderHook::BODY_START][''][0];
+    $result  = $closure();
+
+    $data = $result->getData();
+
+    expect($data)
+        ->toHaveKey('impersonatorName')
+        ->toHaveKey('impersonatedName');
+});
