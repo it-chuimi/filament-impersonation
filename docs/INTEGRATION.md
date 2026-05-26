@@ -7,6 +7,122 @@ For security considerations see [SECURITY.md](SECURITY.md).
 
 ---
 
+## Minimal setup checklist for first-time consumers
+
+Installing the package with Composer is **not enough** to make the impersonation action appear in Filament. The following steps are all required:
+
+- registering the plugin in a Filament panel provider
+- adding the action to the resource or table where operators will impersonate
+- configuring at least one authorization rule
+
+**Why are these steps manual?**
+
+The package does not auto-register itself in any panel, and does not inject the action into any resource. This is intentional: an application may have multiple Filament panels, multiple user-listing resources, and different authorization policies per context. The consuming application decides where impersonation is available and who can trigger it.
+
+---
+
+### Step 1 — Install the package
+
+```bash
+composer require chuimi/filament-impersonation:^0.1.1
+```
+
+### Step 2 — Publish and configure
+
+Publish the configuration file:
+
+```bash
+php artisan vendor:publish --tag=filament-impersonation-config
+```
+
+Open `config/filament-impersonation.php` and set at minimum:
+
+```php
+'guard'      => 'web',
+'user_model' => \App\Models\User::class,
+
+// Who can impersonate — use operator_roles or the can_impersonate callback
+'operator_roles' => ['admin'],
+
+// Who must never be impersonated
+'protected_roles' => ['admin'],
+```
+
+`operator_roles` and `protected_roles` require `spatie/laravel-permission`. If you prefer not to depend on it, use the `can_impersonate` and `is_protected_user` callbacks instead:
+
+```php
+'can_impersonate'   => fn ($operator, $target) => $operator->hasRole('admin'),
+'is_protected_user' => fn ($target) => $target->hasRole('admin'),
+```
+
+Optionally configure where to redirect after starting or stopping an impersonation session:
+
+```php
+'redirect_after_start' => 'filament.admin.pages.dashboard',
+'redirect_after_stop'  => 'filament.admin.pages.dashboard',
+```
+
+> **Security note:** The default configuration has no authorization restrictions. Any authenticated user can impersonate any non-protected user. Set an authorization rule before deploying to production.
+
+For all available configuration options see Section 5 (Authorization) and Section 6 (Redirects) below.
+
+### Step 3 — Register the plugin in your panel provider
+
+In the `PanelProvider` for the panel where operators will work:
+
+```php
+use Chuimi\FilamentImpersonation\Filament\ImpersonationPlugin;
+
+public function panel(Panel $panel): Panel
+{
+    return $panel
+        ->plugins([
+            ImpersonationPlugin::make(),
+        ])
+        // ...
+    ;
+}
+```
+
+Once registered, the impersonation banner is shown automatically at the bottom of the panel while a session is active. If the plugin is not registered in a panel, the banner will not appear there even if an impersonation session is running.
+
+### Step 4 — Add the action to the users table or resource
+
+In the table definition of your user resource or page:
+
+```php
+use Chuimi\FilamentImpersonation\Filament\Actions\ImpersonateAction;
+
+->actions([
+    ImpersonateAction::make(),
+])
+```
+
+The action is hidden automatically when the operator cannot impersonate the record (package disabled, active session already running, self-impersonation attempt, protected target, or unauthorized). It must be added manually to every resource or page where operators should be able to start impersonation.
+
+### Step 5 — Clear caches
+
+```bash
+php artisan optimize:clear
+```
+
+---
+
+### Manual verification checklist
+
+After completing the steps above, verify manually that the integration works correctly:
+
+- [ ] Log in as an authorized operator (a user matching `operator_roles` or `can_impersonate`).
+- [ ] Open the users table where `ImpersonateAction` was added.
+- [ ] Confirm the action is visible only on valid targets — not on protected users, not on your own account.
+- [ ] Start an impersonation session — the action must require a mandatory reason before proceeding.
+- [ ] After starting, confirm the impersonation banner appears at the bottom of the panel.
+- [ ] Navigate within the panel while impersonating — confirm the banner persists across pages.
+- [ ] Stop the impersonation session from the banner and confirm you are redirected correctly.
+- [ ] Check `activity_log` (filtered by `log_name = 'impersonation'`) and confirm both `impersonation.started` and `impersonation.stopped` entries were recorded.
+
+---
+
 ## 1. Requirements
 
 | Dependency | Minimum version | Required |
