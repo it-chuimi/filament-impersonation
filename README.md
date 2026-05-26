@@ -26,6 +26,47 @@ Publish the configuration file:
 php artisan vendor:publish --tag=filament-impersonation-config
 ```
 
+## Minimal setup
+
+Installing the package alone is not enough for the impersonation action to appear in the UI. The plugin must be registered in a panel and the action must be added to a resource explicitly.
+
+The package does not auto-register in any Filament panel or inject the action into any resource. This is intentional — applications may have multiple panels and different authorization policies per context.
+
+**1. Install and publish config**
+
+```bash
+composer require chuimi/filament-impersonation:^0.1.1
+php artisan vendor:publish --tag=filament-impersonation-config
+```
+
+**2. Set required configuration**
+
+In `config/filament-impersonation.php`, configure at minimum `guard`, `user_model`, an authorization rule (`operator_roles` or `can_impersonate`), and `protected_roles`.
+
+**3. Register the plugin in your panel — required for the banner**
+
+```php
+use Chuimi\FilamentImpersonation\Filament\ImpersonationPlugin;
+
+->plugins([ImpersonationPlugin::make()])
+```
+
+**4. Add the action to the users table — required for the trigger**
+
+```php
+use Chuimi\FilamentImpersonation\Filament\Actions\ImpersonateAction;
+
+->actions([ImpersonateAction::make()])
+```
+
+**5. Clear caches**
+
+```bash
+php artisan optimize:clear
+```
+
+For a detailed checklist including config examples, redirects, and manual verification steps see [Integration guide — Minimal setup checklist](docs/INTEGRATION.md#minimal-setup-checklist-for-first-time-consumers).
+
 ## Usage
 
 ### Register the plugin in a Filament panel
