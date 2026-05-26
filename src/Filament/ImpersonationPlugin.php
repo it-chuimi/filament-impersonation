@@ -44,7 +44,7 @@ class ImpersonationPlugin implements Plugin
                     );
                 }
 
-                return view('filament-impersonation::banner', [
+                return view(config('filament-impersonation.banner_view', 'filament-impersonation::banner'), [
                     'impersonatorName' => $impersonatorName,
                     'impersonatedName' => $impersonatedName,
                 ]);
