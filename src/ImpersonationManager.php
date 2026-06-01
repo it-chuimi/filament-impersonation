@@ -378,15 +378,8 @@ class ImpersonationManager
 
     private function validateReason(string $reason): void
     {
-        $config    = config('filament-impersonation.reason', []);
-        $required  = $config['required'] ?? true;
-        $minLength = (int) ($config['min_length'] ?? 10);
-
-        if (!$required) {
-            return;
-        }
-
-        $trimmed = trim($reason);
+        $minLength = (int) (config('filament-impersonation.reason.min_length') ?? 10);
+        $trimmed   = trim($reason);
 
         if ($trimmed === '') {
             throw new \InvalidArgumentException('Impersonation reason is required.');
