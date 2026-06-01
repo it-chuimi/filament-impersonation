@@ -216,6 +216,23 @@ it('action closure calls ImpersonationManager::start and RedirectResolver::after
 });
 
 // ---------------------------------------------------------------------------
+// 9b. reason field is always required — reason.required removed from config
+// ---------------------------------------------------------------------------
+
+it('reason TextInput is always required regardless of config', function () {
+    $action = ImpersonateAction::make();
+
+    $schema = (new ReflectionProperty($action, 'schema'))->getValue($action);
+
+    /** @var TextInput $reasonField */
+    $reasonField = collect($schema)
+        ->first(fn ($c) => $c instanceof TextInput && $c->getName() === 'reason');
+
+    expect($reasonField)->toBeInstanceOf(TextInput::class);
+    expect($reasonField->isRequired())->toBeTrue();
+});
+
+// ---------------------------------------------------------------------------
 // 9. navigate: false is hardcoded in both redirect call sites
 //
 //    Filament 5's CanRedirect::redirect() delegates entirely to getLivewire(),

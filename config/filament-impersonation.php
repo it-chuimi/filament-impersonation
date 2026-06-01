@@ -41,10 +41,10 @@ return [
     |--------------------------------------------------------------------------
     | Reason
     |--------------------------------------------------------------------------
-    | A reason is required when starting impersonation.
+    | A reason is always mandatory when starting impersonation.
+    | Minimum character length is configurable.
     */
     'reason' => [
-        'required'   => true,
         'min_length' => 10,
     ],
 

@@ -879,6 +879,58 @@ it('stop() password_hash_{guard} reflects operator after restoration, not target
 });
 
 // ---------------------------------------------------------------------------
+// 25. Reason validation — siempre obligatorio
+// ---------------------------------------------------------------------------
+
+it('start() throws InvalidArgumentException when reason is empty', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+    loginAs($operator);
+
+    expect(fn () => app(ImpersonationManager::class)->start($target, ''))
+        ->toThrow(\InvalidArgumentException::class);
+});
+
+it('start() throws InvalidArgumentException when reason contains only whitespace', function () {
+    $operator = makeOperator();
+    $target   = makeTarget();
+    loginAs($operator);
+
+    expect(fn () => app(ImpersonationManager::class)->start($target, '   '))
+        ->toThrow(\InvalidArgumentException::class);
+});
+
+it('start() throws InvalidArgumentException when reason is shorter than min_length', function () {
+    config()->set('filament-impersonation.reason.min_length', 15);
+
+    $operator = makeOperator();
+    $target   = makeTarget();
+    loginAs($operator);
+
+    expect(fn () => app(ImpersonationManager::class)->start($target, 'Too short'))
+        ->toThrow(\InvalidArgumentException::class);
+});
+
+it('start() succeeds when reason meets the configured min_length', function () {
+    config()->set('filament-impersonation.reason.min_length', 5);
+
+    $operator = makeOperator();
+    $target   = makeTarget();
+    loginAs($operator);
+
+    app(ImpersonationManager::class)->start($target, 'Five!');
+
+    expect(app(ImpersonationManager::class)->isImpersonating())->toBeTrue();
+});
+
+it('reason.required is not present in the package config', function () {
+    $reason = config('filament-impersonation.reason');
+
+    expect($reason)->toBeArray()
+        ->not->toHaveKey('required');
+});
+
+// ---------------------------------------------------------------------------
 // 24. password_hash is not set in forced stop paths
 // ---------------------------------------------------------------------------
 

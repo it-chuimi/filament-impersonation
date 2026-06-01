@@ -254,13 +254,12 @@ During stop:
 
 ### Reason requirement
 
-A reason is mandatory when starting impersonation.
+A reason is always mandatory when starting impersonation. This is not configurable.
 
-Configuration:
+The minimum length is configurable:
 
 ```php
 'reason' => [
-    'required' => true,
     'min_length' => 10,
 ],
 ```
